@@ -1,6 +1,7 @@
-﻿using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Services.AaemuCustom;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
@@ -17,7 +18,16 @@ public class GiveHonorPoint : SpecialEffectAction
         if (caster is not Character character)
             return;
 
-        var points = (int)Math.Round(AppConfiguration.Instance.World.HonorRate * amount);
+        // aaemu-custom: event honor is scaled by the sidecar's honor multiplier
+        // (default x10) and recorded in the sidecar's account_honor ledger.
+        // Best-effort — falls back to the native HonorRate scaling when the
+        // sidecar is down or disabled (-1). Blocking call is safe (no
+        // SynchronizationContext; local sidecar <10ms; down fails fast).
+        var custom = AaemuCustomClient.Instance
+            .GrantEventHonorAsync(character.AccountId, amount).GetAwaiter().GetResult();
+        var points = custom >= 0
+            ? (int)custom
+            : (int)Math.Round(AppConfiguration.Instance.World.HonorRate * amount);
         character.ChangeGamePoints(GamePointKind.Honor, points);
     }
 }

@@ -217,7 +217,9 @@ public sealed class AaemuCustomClient
     public async Task<long> GrantEventHonorAsync(long accountId, long baseHonor)
     {
         var doc = await PostAsync("/honor/event", new { account_id = accountId, base_honor = baseHonor }).ConfigureAwait(false);
-        return doc != null ? GetLong(doc.RootElement, "honor", 0) : 0;
+        // -1 = sidecar down/disabled; the caller falls back to native HonorRate scaling.
+        // A real grant of 0 (base_honor == 0) is distinct from this failure sentinel.
+        return doc != null ? GetLong(doc.RootElement, "honor", -1) : -1;
     }
 
     public async Task<long> UseSkillPointTomeAsync(long accountId, long characterId)
