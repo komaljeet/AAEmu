@@ -18,6 +18,7 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.NPChar;
@@ -1017,6 +1018,25 @@ public partial class Npc : Unit
             }
         }
 
+        // aaemu-custom: world boss kill — record respawn + mail closed-loop gold
+        // loot to the killing raid. Fire-and-forget: mail works offline and the
+        // death thread must not block on sidecar I/O. Native bosses drop no gold,
+        // so a down sidecar (no loot returned) just means no payout — there is no
+        // native gold fallback to mimic. Bosses are identified by template grade.
+        if (AaemuCustomClient.Instance.Enabled && IsWorldBossGrade(Template.NpcGradeId))
+        {
+            var bossId = (long)TemplateId;
+            var raidId = (long)CharacterTagging.TagTeam;
+            var roster = new HashSet<Character>(eligiblePlayers);
+            foreach (var c in CharacterTagging.GetAllContributors(LootingContainer.MaxLootingRange))
+                roster.Add(c);
+            var members = new List<(long CharacterId, long AccountId)>(roster.Count);
+            foreach (var c in roster)
+                members.Add(((long)c.Id, (long)c.AccountId));
+            if (members.Count > 0)
+                _ = Task.Run(() => BossLootDelivery.RunAsync(bossId, raidId, members));
+        }
+
         base.DoDie(killer, killReason);
         ClearAllAggroTargetsAndCheckCombatState();
         // AggroTable.Clear();
@@ -1026,6 +1046,10 @@ public partial class Npc : Unit
         Spawner?.DoDespawn(this);
         Ai?.GoToDead();
     }
+
+    /// <summary>True for world-boss grades (the sidecar boss hooks key on these).</summary>
+    private static bool IsWorldBossGrade(NpcGradeType grade) =>
+        grade is NpcGradeType.BossA or NpcGradeType.BossB or NpcGradeType.BossC or NpcGradeType.BossS;
 
     private void ClearAllAggroTargetsAndCheckCombatState()
     {

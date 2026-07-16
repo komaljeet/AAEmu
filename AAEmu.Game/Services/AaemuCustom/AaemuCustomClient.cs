@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -191,10 +192,30 @@ public sealed class AaemuCustomClient
 
     // --- boss_respawn ------------------------------------------------------
 
-    public async Task<bool> OnBossKilledAsync(long bossId, long raidId)
+    public async Task<List<BossMemberLoot>> OnBossKilledAsync(long bossId, long raidId, List<(long CharacterId, long AccountId)> members)
     {
-        var doc = await PostAsync("/boss/kill", new { boss_id = bossId, raid_id = raidId }).ConfigureAwait(false);
-        return doc != null;
+        var body = new
+        {
+            boss_id = bossId,
+            raid_id = raidId,
+            members = members.Select(m => new { character_id = m.CharacterId, account_id = m.AccountId }).ToList(),
+        };
+        var doc = await PostAsync("/boss/kill", body).ConfigureAwait(false);
+        var loot = new List<BossMemberLoot>();
+        if (doc?.RootElement.TryGetProperty("loot", out var arr) == true && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in arr.EnumerateArray())
+            {
+                loot.Add(new BossMemberLoot
+                {
+                    CharacterId = GetLong(item, "character_id", 0),
+                    Gold = GetLong(item, "gold", 0),
+                    Thunderstruck = item.TryGetProperty("thunderstruck", out var ts) && ts.ValueKind == JsonValueKind.True,
+                });
+            }
+        }
+
+        return loot;
     }
 
     public async Task<List<long>> GetBossesReadyToSpawnAsync()
