@@ -66,11 +66,17 @@ public class GainLootPackItemEffect : EffectTemplate
             character.Inventory.Bag.ConsumeItem(ItemTaskType.ConsumeSkillSource, ConsumeItemId, ConsumeCount, null);
         }
 
-        //Get the source item's grade if we need to inherit it  
+        //Get the source item's grade if we need to inherit it
         byte? inheritedGrade = InheritGrade ? sourceItem.Grade : null;
 
+        // aaemu-custom: coinpurses (Jester's/Prince's/Queen's Coinpurse) route their coin drop
+        // through the sidecar's gold scaling. Detected by item name so the data-driven loot pack
+        // ids don't need to be hard-coded; ordinary items using this effect are left untouched.
+        var isCoinpurse = sourceItem.Template.Name?
+            .Contains("coinpurse", StringComparison.OrdinalIgnoreCase) == true;
+
         // Give the results
-        pack.GiveLootPack(character, actAbility, ItemTaskType.SkillEffectGainItem, inheritedGrade: inheritedGrade);
+        pack.GiveLootPack(character, actAbility, ItemTaskType.SkillEffectGainItem, inheritedGrade: inheritedGrade, applyCoinpurseScaling: isCoinpurse);
 
         Logger.Debug($"GainLootPackItemEffect {LootPackId}");
     }

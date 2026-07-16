@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Char.Templates;
@@ -593,6 +594,9 @@ public class CharacterManager(
         {
             connection.Characters.Add(character.Id, character);
             connection.SendPacket(new SCCreateCharacterResponsePacket(character));
+            // aaemu-custom sidecar: grant permanent dragon mount + blue hauler.
+            // Best-effort, fire-and-forget — never blocks character creation.
+            _ = AaemuCustomClient.Instance.GrantStarterPerksAsync(character.Id, character.AccountId);
         }
         else
         {
