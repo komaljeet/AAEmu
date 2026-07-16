@@ -22,6 +22,7 @@ using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils.DB;
 
 using NLog;
@@ -365,6 +366,10 @@ public class WorldManager(
     {
         tickManager.OnTick.Subscribe(ActiveRegionTick, TimeSpan.FromSeconds(1));
         tickManager.OnTick.Subscribe(AutoWaterProbeTick, TimeSpan.FromSeconds(10));
+        // aaemu-custom: poll the sidecar for world bosses whose respawn timer has
+        // elapsed and (re)spawn them. Runs on a Task.Run worker (useAsync) so the
+        // sidecar HTTP latency never stalls the tick thread.
+        tickManager.OnTick.Subscribe(BossRespawnPoll.Tick, TimeSpan.FromSeconds(5), useAsync: true);
     }
 
     private static readonly Lock AutoWaterProbeLock = new();

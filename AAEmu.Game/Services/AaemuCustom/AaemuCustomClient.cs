@@ -192,7 +192,7 @@ public sealed class AaemuCustomClient
 
     // --- boss_respawn ------------------------------------------------------
 
-    public async Task<List<BossMemberLoot>> OnBossKilledAsync(long bossId, long raidId, List<(long CharacterId, long AccountId)> members)
+    public async Task<(bool Acked, List<BossMemberLoot> Loot)> OnBossKilledAsync(long bossId, long raidId, List<(long CharacterId, long AccountId)> members)
     {
         var body = new
         {
@@ -215,7 +215,22 @@ public sealed class AaemuCustomClient
             }
         }
 
-        return loot;
+        // Acked = the HTTP call reached the sidecar (it records the kill + schedules
+        // respawn regardless of loot). The caller uses this to decide whether the
+        // sidecar owns the respawn (suppress native) or whether to fall back to it.
+        return (doc != null, loot);
+    }
+
+    /// <summary>
+    /// Confirm that the game server has (re)spawned the given bosses, clearing
+    /// their ready signal so the respawn poll doesn't re-spawn them next tick.
+    /// </summary>
+    public async Task<bool> MarkBossSpawnedAsync(List<long> bossIds)
+    {
+        if (bossIds == null || bossIds.Count == 0)
+            return true;
+        var doc = await PostAsync("/boss/spawned", new { boss_ids = bossIds }).ConfigureAwait(false);
+        return doc != null;
     }
 
     public async Task<List<long>> GetBossesReadyToSpawnAsync()

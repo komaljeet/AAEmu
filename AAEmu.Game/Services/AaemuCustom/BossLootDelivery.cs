@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game.Mails;
@@ -21,11 +20,13 @@ public sealed class BossMemberLoot
 }
 
 /// <summary>
-/// Records a world-boss kill with the sidecar and mails each raid member their
-/// closed-loop gold payout. Fire-and-forget from <c>Npc.DoDie</c> — mail delivery
-/// works whether or not the member is still online, so the death thread is never
-/// blocked. Every step is best-effort: a down sidecar returns no loot and nothing
-/// is mailed (native bosses drop no gold, so there is no native fallback to mimic).
+/// Mails each raid member their closed-loop gold payout for a world-boss kill.
+/// The sidecar call itself (<c>OnBossKilledAsync</c>) is made synchronously in
+/// <c>Npc.DoDie</c> so the death path knows whether the sidecar acknowledged the
+/// kill (and thus owns the respawn); this helper only handles the offline-safe
+/// mail delivery, fired fire-and-forget so the death thread is never blocked on
+/// mail I/O. Best-effort: a down sidecar returns no loot and nothing is mailed
+/// (native bosses drop no gold, so there is no native fallback to mimic).
 /// </summary>
 public static class BossLootDelivery
 {
@@ -35,22 +36,16 @@ public static class BossLootDelivery
     private const string MailTitle = "World Boss Reward";
 
     /// <summary>
-    /// Notify the sidecar of a boss kill and mail the returned per-member gold.
-    /// <paramref name="members"/> is the killing raid roster as
-    /// (character_id, account_id) pairs.
+    /// Mail the given per-member gold loot. <paramref name="loot"/> is the list
+    /// returned by <c>OnBossKilledAsync</c>; each entry's <c>Gold</c> is in sidecar
+    /// gold units and is converted to copper (×10000) on mail.
     /// </summary>
-    public static async Task RunAsync(long bossId, long raidId, List<(long CharacterId, long AccountId)> members)
+    public static async Task MailLootAsync(long bossId, List<BossMemberLoot> loot)
     {
         try
         {
-            var loot = await AaemuCustomClient.Instance
-                .OnBossKilledAsync(bossId, raidId, members)
-                .ConfigureAwait(false);
             if (loot == null || loot.Count == 0)
-            {
-                Logger.Warn($"boss {bossId} kill: sidecar returned no loot (down, unseeded, or empty roster)");
                 return;
-            }
 
             foreach (var entry in loot)
             {
@@ -64,7 +59,7 @@ public static class BossLootDelivery
                 }
 
                 var copper = copperLong > int.MaxValue ? int.MaxValue : (int)copperLong;
-                MailBossGold(entry.CharacterId, copper, entry.Thunderstruck);
+                MailBossGold(bossId, entry.CharacterId, copper, entry.Thunderstruck);
             }
         }
         catch (Exception ex)
@@ -73,12 +68,12 @@ public static class BossLootDelivery
         }
     }
 
-    private static void MailBossGold(long characterId, int copper, bool thunderstruck)
+    private static void MailBossGold(long bossId, long characterId, int copper, bool thunderstruck)
     {
         var name = NameManager.Instance.GetCharacterName((uint)characterId);
         if (string.IsNullOrEmpty(name))
         {
-            Logger.Warn($"boss loot: no name for character {characterId}, skipping mail");
+            Logger.Warn($"boss {bossId} loot: no name for character {characterId}, skipping mail");
             return;
         }
 
@@ -98,8 +93,8 @@ public static class BossLootDelivery
         mail.AttachMoney(copper, 0, 0);
 
         if (mail.Send())
-            Logger.Info($"mailed boss loot to {name} ({characterId}): {copper}c" + (thunderstruck ? " +thunderstruck" : ""));
+            Logger.Info($"mailed boss {bossId} loot to {name} ({characterId}): {copper}c" + (thunderstruck ? " +thunderstruck" : ""));
         else
-            Logger.Warn($"mail.Send() returned false for boss loot to {name} ({characterId})");
+            Logger.Warn($"mail.Send() returned false for boss {bossId} loot to {name} ({characterId})");
     }
 }

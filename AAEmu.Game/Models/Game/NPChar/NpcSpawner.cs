@@ -737,7 +737,11 @@ public class NpcSpawner : Spawner<Npc>
             lock (_spawnLock)
             {
                 // Если условия позволяют, планируем респаун
-                if (RespawnTime > 0 && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
+                // aaemu-custom: a world boss the sidecar acknowledged (SidecarManagesRespawn)
+                // is respawned by the sidecar's respawn poll, not the native spawner — so skip
+                // scheduling a native respawn for it. Falls through to the else (no respawn
+                // scheduled) and native behavior is unchanged when the sidecar is down/unseeded.
+                if (RespawnTime > 0 && !npc.SidecarManagesRespawn && AreOtherNpcsInSpawnZone().Item2 + _scheduledCount < Template.MaxPopulation)
                 {
                     // Планируем респаун и обновляем _scheduledCount
                     IncrementCount(true);

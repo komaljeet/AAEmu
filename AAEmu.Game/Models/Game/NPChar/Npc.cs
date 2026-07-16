@@ -35,6 +35,15 @@ public partial class Npc : Unit
     public NpcSpawner Spawner { get; set; }
 
     /// <summary>
+    /// Set by the aaemu-custom boss-kill hook when the sidecar acknowledged this
+    /// world-boss kill. While true, <see cref="NpcSpawner.DoDespawn"/> skips the
+    /// native respawn and the sidecar's respawn poll owns re-spawning the boss
+    /// after its configurable timer. Left false (native respawn stays in effect)
+    /// when the sidecar is disabled or unreachable at kill time.
+    /// </summary>
+    public bool SidecarManagesRespawn { get; set; }
+
+    /// <summary>
     /// This is the "Idle Animation Id" that is used in UnitModelChangePosture, it can change depending on the time of the day
     /// </summary>
     public uint AnimActionId
@@ -1019,10 +1028,17 @@ public partial class Npc : Unit
         }
 
         // aaemu-custom: world boss kill — record respawn + mail closed-loop gold
-        // loot to the killing raid. Fire-and-forget: mail works offline and the
-        // death thread must not block on sidecar I/O. Native bosses drop no gold,
-        // so a down sidecar (no loot returned) just means no payout — there is no
-        // native gold fallback to mimic. Bosses are identified by template grade.
+        // loot to the killing raid. The sidecar ACK is synchronous so the death
+        // path knows whether the sidecar took ownership of the respawn: if it did
+        // (SidecarManagesRespawn), NpcSpawner.DoDespawn skips the native respawn
+        // and the sidecar's respawn poll re-spawns the boss after its timer. If
+        // the sidecar is down (no ACK), the flag stays false and the native
+        // respawn proceeds unchanged. The blocking call is safe: AAEmu has no
+        // SynchronizationContext, the sidecar is local (<10ms), and a down sidecar
+        // fails the connection instantly. Mail delivery is fire-and-forget
+        // (offline-safe; must not block the death thread). Native bosses drop no
+        // gold, so a down sidecar (no loot) just means no payout — no native gold
+        // fallback to mimic.
         if (AaemuCustomClient.Instance.Enabled && IsWorldBossGrade(Template.NpcGradeId))
         {
             var bossId = (long)TemplateId;
@@ -1033,8 +1049,20 @@ public partial class Npc : Unit
             var members = new List<(long CharacterId, long AccountId)>(roster.Count);
             foreach (var c in roster)
                 members.Add(((long)c.Id, (long)c.AccountId));
-            if (members.Count > 0)
-                _ = Task.Run(() => BossLootDelivery.RunAsync(bossId, raidId, members));
+
+            try
+            {
+                var (acked, loot) = AaemuCustomClient.Instance
+                    .OnBossKilledAsync(bossId, raidId, members).GetAwaiter().GetResult();
+                SidecarManagesRespawn = acked;
+                if (loot != null && loot.Count > 0)
+                    _ = Task.Run(() => BossLootDelivery.MailLootAsync(bossId, loot));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"boss {bossId} kill sidecar call failed: {ex.Message}");
+                // SidecarManagesRespawn stays false → native respawn remains in effect.
+            }
         }
 
         base.DoDie(killer, killReason);
