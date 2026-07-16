@@ -1,5 +1,6 @@
 ﻿#nullable enable
 
+using System.Collections.Concurrent;
 using System.Numerics;
 
 using AAEmu.Game.Core.Managers;
@@ -10,6 +11,7 @@ using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Physics.Util;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils;
 
 using Jitter2;
@@ -28,6 +30,35 @@ public class ShipController(World world, ShipModelV1 shipModel)
 
     /// <summary>Per-ship replication smoothing state; see <see cref="ReplicationSmoothing"/>.</summary>
     public ReplicationSmoothing Replication { get; } = new();
+
+    // aaemu-custom: opt-in flat base speed for ships, cached per slave template id.
+    // The sidecar returns an absolute base from vehicle_stats (seed a row to opt a
+    // specific ship into the flat model); AAEmu's MoveSpeedMul and wind physics
+    // still apply on top. The vehicle_stats row is static, so valid results are
+    // cached for the process lifetime; failures (sidecar down / unseeded -> -1)
+    // are cached for 30s so a down sidecar doesn't block every physics tick. The
+    // native shipModel.Velocity is used on any failure / unseeded ship.
+    private static readonly ConcurrentDictionary<long, (float Speed, DateTime RetryAt)> _shipBaseSpeedCache = new();
+
+    private static float GetSidecarShipBaseSpeed(Slave slave, float nativeVelocity)
+    {
+        var id = (long)slave.Template.Id;
+        var now = DateTime.UtcNow;
+        if (_shipBaseSpeedCache.TryGetValue(id, out var entry) && entry.RetryAt > now)
+            return entry.Speed >= 0f ? entry.Speed : nativeVelocity;
+
+        var s = AaemuCustomClient.Instance
+            .GetVehicleSpeedAsync(id, 0f).GetAwaiter().GetResult();
+        if (s >= 0f)
+        {
+            _shipBaseSpeedCache[id] = (s, DateTime.MaxValue);
+            return s;
+        }
+        // sidecar down or this vehicle not seeded — cache the miss briefly to
+        // avoid a sidecar call every physics tick, fall back to native.
+        _shipBaseSpeedCache[id] = (-1f, now.AddSeconds(30));
+        return nativeVelocity;
+    }
 
     /// <summary>Mass-box Z center/size used by <see cref="Build"/>; change implementations if hull height needs server-side tuning.</summary>
     public static class ShipMassBoxDefaults
@@ -432,7 +463,11 @@ public class ShipController(World world, ShipModelV1 shipModel)
 
         // Clamp speed between min and max Velocity (wind: ±15% of max speed when within ±15° of with/against wind)
         var windMul = GetWindSpeedMul(slave, slaveRotRad);
-        var maxForward = shipModel.Velocity * slave.MoveSpeedMul / 2f * windMul;
+        // aaemu-custom: replace the forward base with the sidecar's flat base when
+        // the ship is opted in (seeded in vehicle_stats); otherwise native. Reverse
+        // keeps the native model (the sidecar doesn't model reverse separately).
+        var baseVelocity = GetSidecarShipBaseSpeed(slave, shipModel.Velocity);
+        var maxForward = baseVelocity * slave.MoveSpeedMul / 2f * windMul;
         var waterMaxReverseAbs = shipModel.ReverseVelocity * slave.MoveSpeedMul / 2f * windMul;
         var maxBackward = -waterMaxReverseAbs;
 
