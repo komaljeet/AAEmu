@@ -8,6 +8,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Merchant;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Core.Packets.C2G;
@@ -86,7 +87,16 @@ public class CSBuyItemsPacket() : GamePacket(CSOffsets.CSBuyItemsPacket, 1)
             if (currency == ShopCurrencyType.Money)
                 money += template.Price * count;
             else if (currency == ShopCurrencyType.Honor)
-                honorPoints += template.HonorPrice * count;
+            {
+                // aaemu-custom: halve the honor price via the sidecar (original_price / 2).
+                // Best-effort — falls back to the native template.HonorPrice when the
+                // sidecar is down or the item isn't seeded in honor_shop_prices (-1 / 404).
+                // Blocking call is safe (no SynchronizationContext; shop buys are low-frequency).
+                var unitPrice = AaemuCustomClient.Instance
+                    .GetHonorShopPriceAsync(itemId).GetAwaiter().GetResult();
+                var price = unitPrice >= 0 ? (int)unitPrice : template.HonorPrice;
+                honorPoints += price * count;
+            }
             else if (currency == ShopCurrencyType.VocationBadges)
                 vocationBadges += template.LivingPointPrice * count;
             else
