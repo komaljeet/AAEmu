@@ -10,6 +10,7 @@ using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Services.AaemuCustom;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects;
 
@@ -313,10 +314,44 @@ public class DamageEffect : EffectTemplate
                 break;
         }
 
+        // aaemu-custom: combat normalization. When the sidecar is enabled and the
+        // defender is a Character with a seeded character_combat_stats row, replace
+        // AAEmu's armor/resistance reduction with the sidecar's flat AP/DP model:
+        //   outgoing = base * (1 + AP/1000)   (attacker AP; no bonus if unseeded)
+        //   taken    = outgoing * (1 - DP/(DP+5000))   (defender DP)
+        // base = the pre-reduction finalDamage (already includes weapon dps, crit,
+        // buffs, etc.). The attacker's AP scales it; the defender's DP mitigates it.
+        // Unseeded defender (or NPC defender — all PvE) -> the sidecar returns null
+        // (-1) and we fall through to the native armor reduction below, so unseeded
+        // characters keep their native mitigation. Best-effort: sidecar down or
+        // disabled -> native. Blocking call is safe (no SynchronizationContext;
+        // local sidecar <10ms; a down sidecar fails the TCP connection instantly).
+        // PvE (NPC defender) makes no sidecar calls at all thanks to the Character gate.
+        var sidecarApplied = false;
+        var sidecarValue = 0;
+        var sidecarAbsorbed = 0;
+        if (AaemuCustomClient.Instance.Enabled && trg is Character defenderChar)
+        {
+            var baseDmg = (long)Math.Round(finalDamage);
+            var atkId = caster is Character atkChar ? (long)atkChar.Id : 0L;
+            var outgoing = AaemuCustomClient.Instance
+                .CalculateDamageAsync(atkId, baseDmg).GetAwaiter().GetResult();
+            if (outgoing < 0) outgoing = baseDmg; // attacker unseeded/non-character -> no AP bonus
+            var taken = AaemuCustomClient.Instance
+                .CalculateDamageTakenAsync((long)defenderChar.Id, outgoing).GetAwaiter().GetResult();
+            if (taken >= 0)
+            {
+                sidecarValue = (int)taken;
+                sidecarAbsorbed = Math.Max(0, (int)(outgoing - taken));
+                sidecarApplied = true;
+            }
+            // defender unseeded -> sidecarApplied stays false -> native reduction below
+        }
+
         // Reduction
         var reductionMul = 1.0f;
 
-        if (target is Unit targetUnit)
+        if (target is Unit targetUnit && !sidecarApplied)
         {
             float armor;
             switch (DamageType)
@@ -341,8 +376,8 @@ public class DamageEffect : EffectTemplate
                     break;
             }
         }
-        var value = (int)(finalDamage * reductionMul);
-        var absorbed = (int)(finalDamage * (1.0f - reductionMul));
+        var value = sidecarApplied ? sidecarValue : (int)(finalDamage * reductionMul);
+        var absorbed = sidecarApplied ? sidecarAbsorbed : (int)(finalDamage * (1.0f - reductionMul));
         var healthStolen = (int)(value * (HealthStealRatio / 100.0f));
         var manaStolen = (int)(value * (ManaStealRatio / 100.0f));
 
