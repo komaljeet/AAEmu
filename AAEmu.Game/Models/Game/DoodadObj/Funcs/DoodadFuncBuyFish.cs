@@ -37,9 +37,10 @@ public class DoodadFuncBuyFish : DoodadFuncTemplate
 
             if (sidecarGold >= 0)
             {
-                // custom economy payout — award the sidecar amount once via the canonical path
+                // custom economy payout — award the sidecar amount once via the canonical path.
+                // sidecar gold is in gold units; AddMoney takes copper (1g = 10000c).
                 character.Equipment.RemoveItem(ItemTaskType.SkillEffectConsumption, backpack, true);
-                character.AddMoney(SlotType.Inventory, (int)sidecarGold);
+                character.AddMoney(SlotType.Inventory, (int)(sidecarGold * 10000));
             }
             else
             {

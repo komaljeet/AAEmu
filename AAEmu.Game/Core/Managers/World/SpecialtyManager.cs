@@ -307,8 +307,10 @@ public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
             .CalculateTradepackRewardAsync(player.AccountId).GetAwaiter().GetResult();
         if (customReward.gold >= 0 && customReward.gilda >= 0)
         {
+            // Gold path: sidecar gold is in gold units; mail money is in copper (1g = 10000c).
+            // Gilda path: flat item count (10), no conversion.
             var customAmount = itemTypeToDeliver == Item.Coins
-                ? (int)customReward.gold
+                ? (int)(customReward.gold * 10000)
                 : (int)customReward.gilda;
             amountOfItemsSeller = customAmount;
             amountOfItemsCrafter = 0;
