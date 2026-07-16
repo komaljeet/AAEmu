@@ -4,6 +4,7 @@ using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Account;
+using AAEmu.Game.Services.AaemuCustom;
 
 using NLog;
 
@@ -18,6 +19,11 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
 
     private readonly ConcurrentDictionary<uint, GameConnection> _accounts = new();
     private readonly Dictionary<uint, object> _locks = [];
+
+    // aaemu-custom: last labor value seen per account, used to derive the labor-spent
+    // delta for the sidecar's gold multiplier. Every labor mutation funnels through
+    // UpdateLabor, so this single hook catches spend, regen, and offline accrual alike.
+    private readonly ConcurrentDictionary<uint, short> _lastLaborKnown = new();
 
     public void Initialize()
     {
@@ -227,6 +233,22 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
         }
         lock (accLock)
         {
+            // aaemu-custom: notify the sidecar of labor spent so the closed-loop gold
+            // multiplier (driven by total labor spent) advances. The spend is derived from
+            // the delta vs. the last value seen for this account — every labor mutation
+            // (spend, regen tick, offline accrual, the RecoverExpEffect bypass) funnels
+            // through UpdateLabor, so this one hook catches them all. Fire-and-forget:
+            // AAEmu's native labor stays authoritative for gameplay gating; the sidecar
+            // only tracks the economy side. A negative delta (labor consumed) is reported;
+            // regen (positive delta) and first-sighting of an account just set the baseline.
+            // Best-effort — the client swallows sidecar failures so this never blocks.
+            if (_lastLaborKnown.TryGetValue(accountId, out var prevLabor) && laborPower < prevLabor)
+            {
+                var spent = (int)(prevLabor - laborPower);
+                _ = AaemuCustomClient.Instance.RecordLaborSpentAsync(accountId, spent);
+            }
+            _lastLaborKnown[accountId] = laborPower;
+
             try
             {
                 using var connection = MySQL.CreateConnection();

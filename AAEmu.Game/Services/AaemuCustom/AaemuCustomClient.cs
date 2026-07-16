@@ -129,6 +129,18 @@ public sealed class AaemuCustomClient
         return doc != null ? GetInt(doc.RootElement, "pool", -1) : -1;
     }
 
+    /// <summary>
+    /// Notify-only labor spend: advances the sidecar's <c>total_labor_spent</c> (which
+    /// drives the gold multiplier) without requiring the sidecar's own pool to cover it.
+    /// Safe to fire-and-forget from <c>AccountManager.UpdateLabor</c>. Returns true if the
+    /// sidecar acknowledged the notification.
+    /// </summary>
+    public async Task<bool> RecordLaborSpentAsync(long accountId, int amount)
+    {
+        var doc = await PostAsync("/labor/spent", new { account_id = accountId, amount }).ConfigureAwait(false);
+        return doc != null;
+    }
+
     public async Task<int> GetLaborAsync(long accountId)
     {
         var doc = await GetAsync($"/labor/{accountId}").ConfigureAwait(false);
