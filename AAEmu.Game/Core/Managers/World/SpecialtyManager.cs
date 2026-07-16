@@ -7,6 +7,7 @@ using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Trading;
 using AAEmu.Game.Models.Tasks.Specialty;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils;
 using AAEmu.Game.Utils.DB;
 using NLog;
@@ -294,6 +295,25 @@ public class SpecialtyManager : Singleton<SpecialtyManager>, ISpecialtyManager
         {
             amountOfItemsSeller = (int)Math.Round(amountOfItemsTotalPayout * sellerShare);
             amountOfItemsCrafter = amountOfItemsTotalPayout - amountOfItemsSeller;
+        }
+
+        // aaemu-custom: replace the native specialty payout with the closed-loop economy reward.
+        // Gold-delivery NPCs (SpecialtyCoinId == 0) pay sidecar gold (100g × labor multiplier);
+        // gilda-delivery NPCs pay sidecar gilda (10 flat, never scaled). The reward is paid flat
+        // to the seller (no crafter split). Best-effort — falls back to the native calculation
+        // above when the sidecar is disabled or unreachable. Blocking call is safe: AAEmu runs
+        // without a SynchronizationContext and the local sidecar replies in <10ms.
+        var customReward = AaemuCustomClient.Instance
+            .CalculateTradepackRewardAsync(player.AccountId).GetAwaiter().GetResult();
+        if (customReward.gold >= 0 && customReward.gilda >= 0)
+        {
+            var customAmount = itemTypeToDeliver == Item.Coins
+                ? (int)customReward.gold
+                : (int)customReward.gilda;
+            amountOfItemsSeller = customAmount;
+            amountOfItemsCrafter = 0;
+            amountOfItemsTotalPayout = customAmount;
+            amountOfItemsBase = customAmount;
         }
 
         // Mail for seller

@@ -5,6 +5,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Services.AaemuCustom;
 using NLog;
 
 namespace AAEmu.Game.Models.Game.Items.Loots;
@@ -511,7 +512,7 @@ public class LootPack
     /// <param name="taskType"></param>
     /// <param name="generatedList"></param>
     /// <param name="inheritedGrade">Grade to inherit (Optional)</param>
-    public bool GiveLootPack(Character character, ActabilityType actabilityType, ItemTaskType taskType, List<(uint itemId, int count, byte grade, uint originalGroup)> generatedList = null, byte? inheritedGrade = null)
+    public bool GiveLootPack(Character character, ActabilityType actabilityType, ItemTaskType taskType, List<(uint itemId, int count, byte grade, uint originalGroup)> generatedList = null, byte? inheritedGrade = null, bool applyCoinpurseScaling = false)
     {
         // If it is not generated yet, generate loot pack info now
         generatedList ??= GeneratePack(character, actabilityType, inheritedGrade);
@@ -558,9 +559,26 @@ public class LootPack
 
         if (coinCount > 0)
         {
-            //We have coins to give out.
-            // Logger.Debug("{Category} - {Character} got {Amount} from lootpack {Lootpack}");
-            character.AddMoney(SlotType.Inventory, coinCount, taskType);
+            // aaemu-custom: coinpurses (Jester's/Prince's/Queen's) scale their coin drop through
+            // the closed-loop economy (base × 20 × labor multiplier). Only applied when the caller
+            // confirmed the source item is a coinpurse, so ordinary mob/fishing coin drops are
+            // untouched. Best-effort — keeps the native coin drop if the sidecar is disabled or
+            // unreachable (returns -1). A 0 result means the world pool can't mint and the reward
+            // pauses, matching the spec. Blocking call is safe (no SynchronizationContext, local).
+            if (applyCoinpurseScaling)
+            {
+                var scaled = AaemuCustomClient.Instance
+                    .CalculateCoinpurseGoldAsync(character.AccountId, coinCount).GetAwaiter().GetResult();
+                if (scaled >= 0)
+                    coinCount = (int)scaled;
+            }
+
+            if (coinCount > 0)
+            {
+                //We have coins to give out.
+                // Logger.Debug("{Category} - {Character} got {Amount} from lootpack {Lootpack}");
+                character.AddMoney(SlotType.Inventory, coinCount, taskType);
+            }
         }
 
         return true;
