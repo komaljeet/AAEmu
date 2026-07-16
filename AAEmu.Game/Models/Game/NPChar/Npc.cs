@@ -1,5 +1,7 @@
 ﻿using System.Collections.Concurrent;
+using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
@@ -18,6 +20,7 @@ using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Movements;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.StaticValues;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Models.Game.NPChar;
@@ -1025,6 +1028,24 @@ public partial class Npc : Unit
 
         Spawner?.DoDespawn(this);
         Ai?.GoToDead();
+
+        // aaemu-custom: world boss kill — notify the sidecar to schedule the respawn and
+        // distribute bank-funded loot to the killing raid, then mail each member their gold.
+        // Boss-grade NPCs only (BossA/BossB/BossC/BossS); trash mobs skip this cheap grade
+        // check. Fire-and-forget so the death thread never blocks on the sidecar call. The
+        // roster is captured here (id/account/name) so delivery works even after the live
+        // Character objects are gone. Best-effort — the sidecar being down only skips loot.
+        if (Template.NpcGradeId is NpcGradeType.BossS or NpcGradeType.BossA
+            or NpcGradeType.BossB or NpcGradeType.BossC)
+        {
+            var bossId = (long)TemplateId;
+            var teamId = (long)CharacterTagging.TagTeam;
+            var roster = eligiblePlayers
+                .Select(c => ((long)c.Id, (long)c.AccountId, c.Name))
+                .ToList();
+            if (roster.Count > 0)
+                _ = Task.Run(() => BossLootDelivery.DeliverAsync(bossId, teamId, roster));
+        }
     }
 
     private void ClearAllAggroTargetsAndCheckCombatState()

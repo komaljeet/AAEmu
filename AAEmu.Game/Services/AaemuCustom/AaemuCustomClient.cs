@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -191,10 +192,29 @@ public sealed class AaemuCustomClient
 
     // --- boss_respawn ------------------------------------------------------
 
-    public async Task<bool> OnBossKilledAsync(long bossId, long raidId)
+    public async Task<List<BossLoot>> OnBossKilledAsync(long bossId, long raidId, List<(long charId, long accountId)> members)
     {
-        var doc = await PostAsync("/boss/kill", new { boss_id = bossId, raid_id = raidId }).ConfigureAwait(false);
-        return doc != null;
+        var body = new
+        {
+            boss_id = bossId,
+            raid_id = raidId,
+            members = members.Select(m => new { character_id = m.charId, account_id = m.accountId }).ToList(),
+        };
+        var doc = await PostAsync("/boss/kill", body).ConfigureAwait(false);
+        var list = new List<BossLoot>();
+        if (doc?.RootElement.TryGetProperty("loot", out var arr) == true && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in arr.EnumerateArray())
+            {
+                list.Add(new BossLoot
+                {
+                    CharacterId = GetLong(item, "character_id", 0),
+                    Gold = GetLong(item, "gold", 0),
+                    Thunderstruck = item.TryGetProperty("thunderstruck", out var ts) && ts.GetBoolean(),
+                });
+            }
+        }
+        return list;
     }
 
     public async Task<List<long>> GetBossesReadyToSpawnAsync()
@@ -267,4 +287,15 @@ public sealed class AaemuCustomClient
         var doc = await GetAsync($"/mount/speed/{mountId}?buffs={buffs.ToString(System.Globalization.CultureInfo.InvariantCulture)}").ConfigureAwait(false);
         return doc != null ? GetSingle(doc.RootElement, "speed", -1f) : -1f;
     }
+}
+
+/// <summary>
+/// Per-member loot returned by the sidecar for a world-boss kill. <c>Gold</c> is in
+/// gold units — convert to copper (×10000) before adding to a wallet or mail.
+/// </summary>
+public sealed class BossLoot
+{
+    public long CharacterId { get; set; }
+    public long Gold { get; set; }
+    public bool Thunderstruck { get; set; }
 }
