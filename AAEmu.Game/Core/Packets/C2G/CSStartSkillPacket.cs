@@ -12,6 +12,7 @@ using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Physics.Debug;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Services.AaemuCustom;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -137,9 +138,31 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         {
             // A skill triggered by an item
             var player = Connection.ActiveChar;
+            if (si.SkillSourceItem == null)
+                return;
+
+            // aaemu-custom: Skill Point Tome — intercept by item template id. The
+            // tome is repurposed from an existing item; its use_skill_id is only a
+            // client-side trigger to send this packet, so we don't gate on it.
+            if (AaemuCustomClient.Instance.Enabled && si.SkillSourceItem.TemplateId == SkillPointTome.ItemId)
+            {
+                SkillPointTome.TryUse(player, si.SkillSourceItem);
+                // Resolve the client's cast bar instantly. The tome has no real
+                // skill effect; SCSkillStartedPacket.Write doesn't serialize the
+                // skill object, so a placeholder built from the client-chosen
+                // use_skill_id is safe even when the template is unknown.
+                skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
+                if (skill.Template != null)
+                    player.SendPacket(new SCSkillStartedPacket(skillId, 0, skillCaster, skillCastTarget, skill, skillObject)
+                    {
+                        RealCastTimeDiv10 = 0, BaseCastTimeDiv10 = 0
+                    });
+                return;
+            }
+
             // var item = player.Inventory.GetItemById(si.ItemId);
             // добавил проверку на ItemBindType.BindOnPickup для записи портала с помощью камина в доме
-            if (si.SkillSourceItem == null || skillId != si.SkillSourceItem.Template.UseSkillId && si.SkillSourceItem.Template.BindType != ItemBindType.BindOnPickup)
+            if (skillId != si.SkillSourceItem.Template.UseSkillId && si.SkillSourceItem.Template.BindType != ItemBindType.BindOnPickup)
                 return;
             // si.ItemTemplateId = item.TemplateId;
             skill = new Skill(SkillManager.Instance.GetSkillTemplate(skillId));
