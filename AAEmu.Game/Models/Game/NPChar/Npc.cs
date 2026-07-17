@@ -893,98 +893,32 @@ public partial class Npc : Unit
         }
         else
         {
-            var isFullTeam = false;
-            var isRaid = false;
-            if (CharacterTagging.TagTeam != 0)
-            {
-                // A team has tagging rights
-                var team = TeamManager.Instance.GetActiveTeam(CharacterTagging.TagTeam);
-                if (team != null)
-                {
-                    if (!team.IsParty)
-                    {
-                        isRaid = true;
-                        // Team is a raid.
-                    }
-                    else if (team.MembersCount() > 3)
-                    {
-                        isFullTeam = true;
-                    }
-                }
-            }
-
             foreach (var pl in eligiblePlayers)
             {
+                // aaemu-custom (issue #14): "exp is NOT reduced if in party or
+                // raid" and "exp x members in raid/group". We read this as no
+                // grouping penalty — every eligible member gets the full kill XP
+                // (and so does their pet). A literal x member-count multiplier was
+                // judged too extreme for 50-man raids (x50 each, on top of the x20
+                // ExpRate), so plMod/mateMod stay at 1.0 regardless of group size.
                 var plMod = 1f;
                 var mateMod = 1f;
 
-                if (isRaid)
-                {
-                    // Player is in a raid. 1.2, pet XP is capped a full team value, but player gets raid XP regardless of how many raiders are present.
-                    plMod = 0.33f;
-                    mateMod = 0.66f;
-                }
-                else if (isFullTeam)
-                {
-                    // Player is in a team of more than 3 people. Player gets full party XP regardless of how many party members are present.
-                    plMod = 0.66f;
-                    mateMod = 0.66f;
-                }
+                // aaemu-custom (issue #14): removed the +-10 level-difference hard
+                // gate (and the levDif scaling, which could go negative — e.g.
+                // 1.0 - 0.1 * 20 = -1.0 — once the zero-XP gate is gone) so every
+                // eligible kill awards full XP regardless of the level gap. This
+                // lets a high-level carry a low-level through any content.
+                var plKillXp = (int)(KillExp * plMod);
+                var mateKillXp = (int)(KillExp * mateMod);
 
-                else if (eligiblePlayers.Count is > 1 and <= 3)
+                pl.AddExp(plKillXp, true);
+                var mateList = pl.ParentWorld.MateManager.GetActiveMates(pl.Id);
+                foreach (var mate in mateList)
                 {
-                    // If players are between 2 and 3, we scale. At this point, the party doesn't matter, just nearby players. 
-                    if (eligiblePlayers.Count == 2)
-                    {
-                        plMod = 0.90f;
-                        mateMod = 0.90f;
-                    }
-                    else if (eligiblePlayers.Count == 3)
-                    {
-                        plMod = 0.875f;
-                        mateMod = 0.875f;
-                    }
-                }
-                else
-                {
-                    // Player is solo, or at least only 1 player is close enough to get rights
-                    plMod = 1f;
-                    mateMod = 1f;
-                }
-
-                // Now we need to scale XP based on level difference, which gets a bit more complex.
-
-                if (pl.Level >= this.Level + 10 || pl.Level <= this.Level - 10)
-                {
-                    // No XP for you or your pet. Will check on the +10
-                }
-                else
-                {
-                    var levDif = 1.0f;
-                    var levelDifference = pl.Level - this.Level;
-
-                    if (levelDifference > 0)
-                    {
-                        // pl.Level is above this.Level
-                        levDif = 1.0f - 0.1f * levelDifference;
-                    }
-                    else if (levelDifference < 0)
-                    {
-                        // pl.Level is below this.Level
-                        levDif = 1.0f + 0.1f * -levelDifference;
-                    }
-
-                    var plKillXp = (int)(KillExp * plMod * levDif);
-                    var mateKillXp = (int)(KillExp * mateMod * levDif);
-
-                    pl.AddExp(plKillXp, true);
-                    var mateList = pl.ParentWorld.MateManager.GetActiveMates(pl.Id);
-                    foreach (var mate in mateList)
-                    {
-                        mate.AddExp(mateKillXp);
-                        // TODO: Proper message?
-                        pl.SendMessage($"Pet gained {mateKillXp} XP");
-                    }
+                    mate.AddExp(mateKillXp);
+                    // TODO: Proper message?
+                    pl.SendMessage($"Pet gained {mateKillXp} XP");
                 }
 
                 // character.Quests.OnKill(this);
