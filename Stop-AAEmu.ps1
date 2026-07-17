@@ -55,7 +55,7 @@ if ($existing -eq 'aaemu-custom') {
 Write-Host "==> Stopping MySQL container..." -ForegroundColor Cyan
 Push-Location $RepoRoot
 try {
-    docker compose stop db
+    docker compose -f docker-compose.yaml -f docker-compose.dev.yaml stop db
 } finally { Pop-Location }
 
 if (-not $KeepDockerRunning) {

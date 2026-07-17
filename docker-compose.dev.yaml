@@ -1,0 +1,18 @@
+# Windows dev-path override, applied by Start-AAEmu.ps1 via:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d db
+#
+# The base docker-compose.yaml deliberately does NOT publish 3306 (VPS-safe:
+# compose services reach `db:3306` over the internal network, and MySQL must not
+# be internet-exposed on a VPS). The Windows dev path is different: Start-AAEmu.ps1
+# runs Login/Game as bare `dotnet run` (-> 127.0.0.1:3306) and the sidecar as a
+# standalone `docker run` container (-> host.docker.internal:3306), so both need
+# MySQL reachable on the host network. This override adds that publish. It must
+# bind 0.0.0.0 (not 127.0.0.1-only) so the standalone sidecar can reach it via the
+# host gateway.
+#
+# NOT used by the VPS deploy — deploy/deploy.sh runs the base file only. Do not
+# load this override on a VPS (it would expose MySQL to the internet).
+services:
+  db:
+    ports:
+      - "3306:3306"

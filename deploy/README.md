@@ -24,7 +24,9 @@ scp game_pak         vps:ArcheAge/AAEmu.Game/ClientData/game_pak
 scp compact.sqlite3  vps:ArcheAge/AAEmu.Game/Data/compact.sqlite3
 
 # 2. Open the firewall for client-facing ports only: 1237, 1239, 1250.
-#    (3306 MySQL, 1281 sidecar, 1234 login-internal stay inside the compose network.)
+#    (3306 MySQL is NOT published by the base compose — only the Windows dev
+#    override docker-compose.dev.yaml publishes it, and the VPS deploy doesn't
+#    load that override. 1281 sidecar + 1234 login-internal also stay internal.)
 
 # 3. One-shot deploy: generate .env, sanity-check the assets, build + start the stack.
 bash deploy/deploy.sh
@@ -103,3 +105,8 @@ docker compose --profile admin up adminer # opt-in DB UI on 127.0.0.1:8080 (SSH 
 - **`Scripts/docker-install-local.sh` is superseded** by this compose + `deploy/setup.sh` for
   VPS deploys. It remains for the upstream `.server_files`/`sed` workflow if anyone still uses it.
 - **Only 1237/1239/1250 are public.** Never expose 3306 (MySQL) or 1281 (sidecar) to the internet.
+- **3306 publish is Windows-dev-only.** The base `docker-compose.yaml` does NOT publish 3306
+  (VPS-safe: compose services use `db:3306` internally). `docker-compose.dev.yaml` publishes it
+  for the Windows dev path (`Start-AAEmu.ps1` loads it via `-f` so bare-dotnet Login/Game and the
+  standalone sidecar can reach MySQL on the host). The VPS deploy (`deploy/deploy.sh`) runs the
+  base file only, so MySQL is never internet-exposed — no firewalling of 3306 needed on the VPS.

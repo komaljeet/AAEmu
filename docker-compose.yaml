@@ -12,8 +12,13 @@
 # deploy/README.md.
 #
 # Public (client-facing) ports: 1237 (login), 1239 + 1250 (game).
-# Internal-only (compose network): 3306 (db), 1281 (sidecar), 1234 (login internal).
-# adminer is opt-in via `--profile admin` and bound to 127.0.0.1 (SSH-tunnel only).
+# 3306 (db) is NOT published here (VPS-safe: compose services reach `db:3306`
+# over the internal network, and MySQL must not be internet-exposed). The Windows
+# dev path publishes 3306 via docker-compose.dev.yaml (applied with `-f` in
+# Start-AAEmu.ps1) so bare-dotnet Login/Game + the standalone sidecar can reach
+# MySQL on the host. 1281 (sidecar) + 1234 (login internal) stay inside the compose
+# network. adminer is opt-in (`--profile admin`, bound to 127.0.0.1 / SSH-tunnel
+# only).
 
 services:
 
@@ -30,7 +35,13 @@ services:
       - ./.server_files/AAEmu.Database/mysql:/var/lib/mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-    # 3306 is NOT published — reachable inside the compose network as `db:3306`.
+    # 3306 is NOT published here. On a VPS this is the safe default: the compose
+    # login/game/sidecar containers reach `db:3306` over the internal network, so
+    # MySQL never needs to be host-visible (and must NOT be internet-exposed).
+    # The Windows dev path (Start-AAEmu.ps1) runs Login/Game as bare `dotnet run`
+    # (-> 127.0.0.1:3306) and the sidecar as a standalone container
+    # (-> host.docker.internal:3306), so it needs 3306 on the host network — that
+    # publish lives in docker-compose.dev.yaml, applied via `-f` in Start-AAEmu.ps1.
     # (Optional DB admin UI: `docker compose --profile admin up adminer`, then
     # tunnel ssh -L 8080:127.0.0.1:8080 vps — adminer depends on this service.)
     healthcheck:
