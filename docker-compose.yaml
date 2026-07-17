@@ -1,117 +1,162 @@
-# If you want to use a Docker Volume :
-#   Uncomment the line "db_data:/var/lib/mysql" and comment the line "./.server_files/AAEmu.Database/mysql:/var/lib/mysql" that are in the db services
-#   Also uncomment the two volumes line at the end... This is useful if you use WSL Shell on Windows to launch the compose file.
+# One-command Linux VPS deploy for the full AAEmu stack:
+#   db (MySQL) -> sidecar-init (schema bootstrap, one-shot) -> sidecar (Rust API)
+#   -> login (C#) -> game (C#).
+#
+# `docker compose up -d --build` brings up everything. Config is injected via
+# environment variables (Program.cs loads Config.json then AddEnvironmentVariables()
+# last, so Connections__MySQLProvider__Host etc. override the %db_host% placeholders
+# baked into the image — no .server_files, no sed). The only host-staged assets are
+# the two gitignored client-extracted files: AAEmu.Game/ClientData/game_pak (~24 GB)
+# and AAEmu.Game/Data/compact.sqlite3. One-shot entry point: `bash deploy/deploy.sh`
+# (generates .env, sanity-checks the assets, then runs `up -d --build`). See
+# deploy/README.md.
+#
+# Public (client-facing) ports: 1237 (login), 1239 + 1250 (game).
+# Internal-only (compose network): 3306 (db), 1281 (sidecar), 1234 (login internal).
+# adminer is opt-in via `--profile admin` and bound to 127.0.0.1 (SSH-tunnel only).
+
 services:
- 
-    db:
-        image: mysql:8.0.36
-        restart: unless-stopped
-        # command: --default_authentication_plugin=mysql_native_password
-        volumes:
-            - ./SQL/aaemu_login.sql:/docker-entrypoint-initdb.d/aaemu_login.sql
-            - ./SQL/aaemu_game.sql:/docker-entrypoint-initdb.d/aaemu_game.sql
-            - ./.server_files/AAEmu.Database/mysql:/var/lib/mysql
-            # - db_data:/var/lib/mysql
-        environment:
-            MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-        ports:
-            - 3306:3306
-        healthcheck:
-            test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${DB_PASSWORD}" ]
-            interval: 5s
-            timeout: 5s
-            retries: 20
 
-    adminer:
-        image: adminer
-        restart: unless-stopped
-        environment:
-            ADMINER_DEFAULT_DB_DRIVER: mysql
-            ADMINER_DEFAULT_DB_HOST: db
-            ADMINER_DESIGN: nette
-        ports:
-            - 8080:8080
-        depends_on:
-            db:
-              condition: service_healthy
+  db:
+    image: mysql:8.0.36
+    restart: unless-stopped
+    volumes:
+      - ./SQL/aaemu_login.sql:/docker-entrypoint-initdb.d/aaemu_login.sql:ro
+      - ./SQL/aaemu_game.sql:/docker-entrypoint-initdb.d/aaemu_game.sql:ro
+      # Bind mount (not a named volume) so the local dev stack's existing data in
+      # .server_files/AAEmu.Database/mysql is preserved across compose changes.
+      # On a fresh VPS clone this dir doesn't exist; Docker creates it empty and
+      # MySQL initializes it on first boot. (gitignored + dockerignored.)
+      - ./.server_files/AAEmu.Database/mysql:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    # 3306 is NOT published — reachable inside the compose network as `db:3306`.
+    # (Optional DB admin UI: `docker compose --profile admin up adminer`, then
+    # tunnel ssh -L 8080:127.0.0.1:8080 vps — adminer depends on this service.)
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
-    login:
-        build:
-            context: .
-            dockerfile: ./AAEmu.Login/Dockerfile
-            args:
-                - CONFIGURATION=${BUILD_CONFIGURATION}
-                - FRAMEWORK=${BUILD_FRAMEWORK}
-                - RUNTIME=${BUILD_RUNTIME}
-                - DB_HOST=db
-                - DB_PORT=3306
-                - DB_USER=${DB_USER}
-                - DB_PASSWORD=${DB_PASSWORD}
-        image: aaemu-login:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
-        restart: unless-stopped
-        volumes:
-          - "./.server_files/AAEmu.Login/Config.json:/app/Config.json:ro"
-        environment:
-            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
-            GameServers__0__ID: 1
-            GameServers__0__Name: AAEmu.Game
-            GameServers__0__Host: 127.0.0.1
-            GameServers__0__Port: 1239
-        ports:
-            - 1237:1237
-        develop:
-            watch:
-                - path: ./AAEmu.Login
-                  action: rebuild
-        healthcheck:
-            test: ["CMD-SHELL", "ping -c 1 db || exit 1"]
-            interval: 5s
-            timeout: 5s
-            retries: 20
-        depends_on:
-            db:
-              condition: service_healthy
+  # One-shot: applies the sidecar schema + world bank bootstrap + vehicle/mount
+  # defaults via the sidecar's own `--init-db`, then exits 0. Idempotent, so it
+  # safely re-runs on every `docker compose up`.
+  sidecar-init:
+    build: ./aaemu-custom
+    image: aaemu-custom:latest
+    restart: "no"
+    command: ["--init-db"]
+    environment:
+      SIDECAR_DB_URL: mysql://root:${DB_PASSWORD}@db:3306/aaemu_game
+      SIDECAR_LISTEN: 0.0.0.0:1281
+    depends_on:
+      db:
+        condition: service_healthy
 
-    game:
-        build:
-            context: .
-            dockerfile: ./AAEmu.Game/Dockerfile
-            args:
-                - CONFIGURATION=${BUILD_CONFIGURATION}
-                - FRAMEWORK=${BUILD_FRAMEWORK}
-                - RUNTIME=${BUILD_RUNTIME}
-                - DB_HOST=db
-                - DB_PORT=3306
-                - DB_USER=${DB_USER}
-                - DB_PASSWORD=${DB_PASSWORD}
-                - LOGIN_HOST=login
-                - LOGIN_PORT=1234
-        image: aaemu-game:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
-        restart: unless-stopped
-        volumes:
-          - "./.server_files/AAEmu.Game/ClientData:/app/ClientData:ro"
-          - "./.server_files/AAEmu.Game/Data:/app/Data:ro"
-          - "./.server_files/AAEmu.Game/Configurations:/app/Configurations:ro"
-          - "./.server_files/AAEmu.Game/Config.json:/app/Config.json:ro"
-        environment:
-            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
-        ports:
-            - 1239:1239
-            - 1250:1250
-        develop:
-            watch:
-                - path: ./AAEmu.Game
-                  action: rebuild
-        healthcheck:
-            test: ["CMD-SHELL", "mysql aaemu_game -h db -u root -p${DB_PASSWORD}"]
-            interval: 5s
-            timeout: 5s
-            retries: 20
-        depends_on:
-            db:
-              condition: service_healthy
-            login:
-              condition: service_healthy
-            
-# volumes:
-#   db_data:
+  # Sidecar runtime: HTTP API (:1281) + scheduler loops. Reuses the image built by
+  # sidecar-init (no `build:` here). Not published — the game container calls it as
+  # http://sidecar:1281 over the compose network.
+  sidecar:
+    image: aaemu-custom:latest
+    restart: unless-stopped
+    environment:
+      SIDECAR_DB_URL: mysql://root:${DB_PASSWORD}@db:3306/aaemu_game
+      SIDECAR_LISTEN: 0.0.0.0:1281
+    depends_on:
+      sidecar-init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+  login:
+    build:
+      context: .
+      dockerfile: ./AAEmu.Login/Dockerfile
+      args:
+        - CONFIGURATION=${BUILD_CONFIGURATION}
+    image: aaemu-login:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
+    restart: unless-stopped
+    environment:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
+      SecretKey: ${SECRET_KEY}
+      Connections__MySQLProvider__Host: db
+      Connections__MySQLProvider__Port: 3306
+      Connections__MySQLProvider__User: ${DB_USER}
+      Connections__MySQLProvider__Password: ${DB_PASSWORD}
+      Connections__MySQLProvider__Database: aaemu_login
+      # Address Login hands to clients for the game server — must be the VPS public
+      # host (IP/domain), NOT 127.0.0.1, or remote clients loop back to themselves.
+      GameServers__0__ID: 1
+      GameServers__0__Name: AAEmu.Game
+      GameServers__0__Host: ${PUBLIC_HOST}
+      GameServers__0__Port: 1239
+    ports:
+      - "1237:1237"   # clients
+      # 1234 (internal game<->login) not published
+    depends_on:
+      db:
+        condition: service_healthy
+
+  game:
+    build:
+      context: .
+      dockerfile: ./AAEmu.Game/Dockerfile
+      args:
+        - CONFIGURATION=${BUILD_CONFIGURATION}
+    image: aaemu-game:${PROJECT_VERSION_PREFIX}-${PROJECT_VERSION_SUFFIX}
+    restart: unless-stopped
+    volumes:
+      # game_pak (~24 GB) and compact.sqlite3 are gitignored + dockerignored —
+      # stage them on the VPS into these repo dirs before `up`. The rest of Data/
+      # and Configurations/ are committed and also baked into the image, but
+      # mounting them read-only allows live tweaks without a rebuild.
+      - ./AAEmu.Game/ClientData:/app/ClientData:ro
+      - ./AAEmu.Game/Data:/app/Data:ro
+      - ./AAEmu.Game/Configurations:/app/Configurations:ro
+    environment:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
+      SecretKey: ${SECRET_KEY}
+      Connections__MySQLProvider__Host: db
+      Connections__MySQLProvider__Port: 3306
+      Connections__MySQLProvider__User: ${DB_USER}
+      Connections__MySQLProvider__Password: ${DB_PASSWORD}
+      Connections__MySQLProvider__Database: aaemu_game
+      LoginNetwork__Host: login
+      LoginNetwork__Port: 1234
+      # Enable the aaemu-custom integration; the game calls the sidecar over the
+      # compose network as http://sidecar:1281.
+      AaemuCustom__Enabled: "true"
+      AaemuCustom__BaseUrl: http://sidecar:1281
+    ports:
+      - "1239:1239"   # clients
+      - "1250:1250"   # clients (stream)
+    # The game server loads the ~24 GB pak at boot before opening 1239; give it a
+    # long grace period before the healthcheck can mark it unhealthy.
+    healthcheck:
+      test: ["CMD-SHELL", "mysql aaemu_game -h db -u root -p${DB_PASSWORD} -e 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 600s
+    depends_on:
+      db:
+        condition: service_healthy
+      sidecar:
+        condition: service_started
+      login:
+        condition: service_started
+
+  adminer:
+    image: adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_DB_DRIVER: mysql
+      ADMINER_DEFAULT_DB_HOST: db
+      ADMINER_DESIGN: nette
+    ports:
+      - "127.0.0.1:8080:8080"   # SSH-tunnel only — never exposed publicly
+    profiles: ["admin"]
+    depends_on:
+      db:
+        condition: service_healthy

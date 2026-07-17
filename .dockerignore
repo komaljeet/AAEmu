@@ -1,2 +1,9 @@
+# Heavy client-extracted assets — staged on the host and mounted as volumes,
+# never baked into an image (24 GB game_pak would bloat the build context).
 **/game_pak
 **/compact.sqlite3
+
+# Local dev overrides + secrets — must not leak into a build context.
+**/Config.Local.json
+.env
+.server_files
