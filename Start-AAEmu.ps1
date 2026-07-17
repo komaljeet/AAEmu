@@ -88,7 +88,11 @@ Write-Host "    Docker engine ready." -ForegroundColor Green
 Write-Host "==> Starting MySQL container (docker compose up -d db)..." -ForegroundColor Cyan
 Push-Location $RepoRoot
 try {
-    docker compose up -d db
+    # The base docker-compose.yaml does NOT publish 3306 (VPS-safe). The Windows
+    # dev path needs 3306 on the host (bare dotnet -> 127.0.0.1:3306, standalone
+    # sidecar -> host.docker.internal:3306), so apply the dev override that adds
+    # the publish. See docker-compose.dev.yaml.
+    docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d db
     if ($LASTEXITCODE -ne 0) { throw "docker compose up -d db failed (exit $LASTEXITCODE)." }
 } finally { Pop-Location }
 
