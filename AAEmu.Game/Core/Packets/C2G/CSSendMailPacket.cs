@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Services.AaemuCustom;
 using AAEmu.Game.Utils;
 
 namespace AAEmu.Game.Core.Packets.C2G;
@@ -65,6 +66,12 @@ public class CSSendMailPacket() : GamePacket(CSOffsets.CSSendMailPacket, 1)
             if (mailResult == MailResult.Success)
             {
                 Connection.ActiveChar.SendErrorMessage(ErrorMessageType.MailSuccess);
+                // aaemu-custom: log the outbound gold-transfer leg. money0 is the
+                // attached copper; the sidecar records it as transfer_out so the
+                // recipient's transfer_in (claimed later) nets to zero in the
+                // ledger. Fire-and-forget; never blocks the send.
+                if (money0 > 0)
+                    GoldTransfer.LogSend(Connection.ActiveChar.AccountId, Connection.ActiveChar.Id, money0);
             }
             else
             {

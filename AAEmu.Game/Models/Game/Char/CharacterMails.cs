@@ -4,6 +4,7 @@ using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
+using AAEmu.Game.Services.AaemuCustom;
 
 namespace AAEmu.Game.Models.Game.Char;
 
@@ -150,10 +151,19 @@ public class CharacterMails
             }
             if (thisMail.Body.CopperCoins > 0 && takeMoney)
             {
-                Self.ChangeMoney(SlotType.Inventory, thisMail.Body.CopperCoins);
+                var claimedCopper = thisMail.Body.CopperCoins;
+                Self.ChangeMoney(SlotType.Inventory, claimedCopper);
                 thisMail.Body.CopperCoins = 0;
                 thisMail.Header.Attachments -= 1;
                 tookMoney = true;
+                // aaemu-custom: log the inbound gold-transfer leg for
+                // player-to-player mail only. System mails (boss loot, auction
+                // proceeds) are gameplay rewards already recorded by their own
+                // hooks, not player transfers. Also asks the sidecar to evaluate
+                // the recipient for RMT-suspect flagging (admin review only,
+                // never blocks). Fire-and-forget.
+                if (thisMail.MailType == MailType.Normal)
+                    GoldTransfer.LogClaim(Self.AccountId, Self.Id, claimedCopper);
             }
 
             var itemSlotList = new List<ItemIdAndLocation>();
