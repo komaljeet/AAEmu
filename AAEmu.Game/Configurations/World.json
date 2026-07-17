@@ -7,7 +7,7 @@
         "MinimumExpLossLevel": 10,
         "PvEDurabilityLossRate": 1.0,
         "PvPDurabilityLossRate": 1.0,
-        "ExpRate": 1.0,
+        "ExpRate": 20.0,
         "HonorRate": 1.0,
         "VocationRate": 1.0,
         "LootRate": 1.0,

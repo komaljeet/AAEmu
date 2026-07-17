@@ -19,8 +19,15 @@ public class ExperienceManager : Singleton<ExperienceManager>, IExperienceManage
     private readonly List<int> _mateExpByLevel = [];
 
     // TODO: Put this in the configuration files
-    /// <summary>Artificial level cap for players. If database contains more levels than this, they will be ignored.</summary>
-    private static byte PlayerLevelCap => 55;
+    /// <summary>
+    /// Artificial level cap for players. The 1.2 client encodes level as a single
+    /// byte on the wire (<see cref="Packets.G2C.SCLevelChangedPacket"/>,
+    /// <c>SCUnitStatePacket</c>), so 255 is the hard ceiling — a higher cap (e.g.
+    /// 999) is not reachable without modifying the client protocol. The shipped
+    /// <c>levels</c> table only has real data up to 55; <see cref="Load"/> generates
+    /// a fresh int32-safe curve for 56..<see cref="PlayerLevelCap"/>.
+    /// </summary>
+    private static byte PlayerLevelCap => 255;
     /// <summary>Artificial level cap for mates (mounts, pets). If database contains more levels than this, they will be ignored.</summary>
     private static byte MateLevelCap => 50;
 
@@ -193,7 +200,69 @@ public class ExperienceManager : Singleton<ExperienceManager>, IExperienceManage
         MaxPlayerLevel = (byte)Math.Min(_levelTemplatesByLevel.Count, playerLevelCap);
         MaxMateLevel = (byte)Math.Min(_levelTemplatesByLevel.Count, mateLevelCap);
 
+        // aaemu-custom (issue #14): "no level limit". The shipped levels table
+        // only has real data up to 55 (a 999,999,056 exp wall at 56, then 1-exp
+        // filler to 101), and TotalExp is int32, so the steep stock curve can't
+        // physically extend past ~56. Keep the DB rows 1-55 and generate a fresh,
+        // strictly-increasing, int32-safe curve for 56..playerLevelCap. Post-55
+        // becomes the fast-fun tier on a x20 server. Mates keep their stock cap.
+        GenerateExtendedPlayerCurve(playerLevelCap);
+        MaxPlayerLevel = (byte)Math.Min(_levelTemplatesByLevel.Count, playerLevelCap);
+
         Logger.Info("Experience data loaded");
+    }
+
+    /// <summary>
+    /// Replaces the broken placeholder level rows (56+) in the loaded templates
+    /// with a generated, strictly-increasing, int32-safe experience curve up to
+    /// <paramref name="playerLevelCap"/>, and grants one additional skill point
+    /// per level beyond 55 (continuing the stock late-curve pattern).
+    /// </summary>
+    /// <param name="playerLevelCap">The configured player level cap.</param>
+    /// <remarks>
+    /// Levels 1-55 are kept verbatim from the database. The generated delta is
+    /// <c>2,000,000 + 50,000 * (level - 56)</c>; at level 255 the running total
+    /// is ~1.57b, comfortably under <see cref="int.MaxValue"/> (~2.15b). Mate exp
+    /// for generated rows is left at 0 — mates are capped at
+    /// <see cref="MateLevelCap"/> and never reach these levels.
+    /// </remarks>
+    private void GenerateExtendedPlayerCurve(byte playerLevelCap)
+    {
+        // Keep DB rows 1..55 (the real ArcheAge curve). If the cap is at or below
+        // that, there is nothing to extend.
+        var keep = Math.Min(_levelTemplatesByLevel.Count, 55);
+        if (playerLevelCap <= keep)
+            return;
+
+        // Drop everything from level 56 on (broken placeholder), then regenerate.
+        if (_levelTemplatesByLevel.Count > keep)
+        {
+            _levelTemplatesByLevel.RemoveRange(keep, _levelTemplatesByLevel.Count - keep);
+            _expByLevel.RemoveRange(keep, _expByLevel.Count - keep);
+            _mateExpByLevel.RemoveRange(keep, _mateExpByLevel.Count - keep);
+        }
+
+        var lastTemplate = _levelTemplatesByLevel[^1];
+        var totalExp = lastTemplate.TotalExp;
+        var lastSkillPoints = lastTemplate.SkillPoints;
+
+        const long baseDelta = 2_000_000L;
+        const long deltaStep = 50_000L;
+        for (var level = keep + 1; level <= playerLevelCap; level++)
+        {
+            var delta = baseDelta + deltaStep * (level - 56); // 0 at level 56
+            totalExp += (int)delta;
+            var template = new ExperienceLevelTemplate
+            {
+                Level = (byte)level,
+                TotalExp = totalExp,
+                TotalMateExp = 0, // mates are capped at MateLevelCap; unused beyond
+                SkillPoints = lastSkillPoints + (level - 55), // +1 per level past 55
+            };
+            _levelTemplatesByLevel.Add(template);
+            _expByLevel.Add(template.TotalExp);
+            _mateExpByLevel.Add(template.TotalMateExp);
+        }
     }
 
     private ExperienceLevelTemplate? GetTemplateForLevel(byte level)

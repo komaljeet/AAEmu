@@ -327,10 +327,13 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Character, UnitFormulaKind.Str);
-            var parameters = new Dictionary<string, double> { ["level"] = Level };
-            var result = formula.Evaluate(parameters);
-            var res = result;
+            // aaemu-custom (issue #14): "stats become level x stats" — primary
+            // stats scale linearly with level (Level * 10) instead of the stock
+            // unit_formula curve, so a high-level character's base stats grow
+            // aggressively. Equipment flat adds and buff bonuses still apply on
+            // top. Derived stats (MaxHp/MaxMp/…) auto-scale because their formulas
+            // read these overridden Str/Dex/Sta/Int/Spi/Fai properties.
+            var res = (double)(Level * 10);
             foreach (var item in Equipment.Items)
                 if (item is EquipItem { IsNotDestroyed: true } equip)
                     res += equip.Str;
@@ -345,9 +348,8 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Character, UnitFormulaKind.Dex);
-            var parameters = new Dictionary<string, double> { ["level"] = Level };
-            var res = formula.Evaluate(parameters);
+            // aaemu-custom (issue #14): stats scale as Level * 10 (see Str).
+            var res = (double)(Level * 10);
             foreach (var item in Equipment.Items)
                 if (item is EquipItem { IsNotDestroyed: true } equip)
                     res += equip.Dex;
@@ -362,9 +364,8 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Character, UnitFormulaKind.Sta);
-            var parameters = new Dictionary<string, double> { ["level"] = Level };
-            var res = formula.Evaluate(parameters);
+            // aaemu-custom (issue #14): stats scale as Level * 10 (see Str).
+            var res = (double)(Level * 10);
             foreach (var item in Equipment.Items)
                 if (item is EquipItem { IsNotDestroyed: true } equip)
                     res += equip.Sta;
@@ -379,9 +380,8 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Character, UnitFormulaKind.Int);
-            var parameters = new Dictionary<string, double> { ["level"] = Level };
-            var res = formula.Evaluate(parameters);
+            // aaemu-custom (issue #14): stats scale as Level * 10 (see Str).
+            var res = (double)(Level * 10);
             foreach (var item in Equipment.Items)
                 if (item is EquipItem { IsNotDestroyed: true } equip)
                     res += equip.Int;
@@ -396,9 +396,8 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Character, UnitFormulaKind.Spi);
-            var parameters = new Dictionary<string, double> { ["level"] = Level };
-            var res = formula.Evaluate(parameters);
+            // aaemu-custom (issue #14): stats scale as Level * 10 (see Str).
+            var res = (double)(Level * 10);
             foreach (var item in Equipment.Items)
                 if (item is EquipItem { IsNotDestroyed: true } equip)
                     res += equip.Spi;
@@ -413,9 +412,8 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var formula = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Character, UnitFormulaKind.Fai);
-            var parameters = new Dictionary<string, double> { ["level"] = Level };
-            var res = formula.Evaluate(parameters);
+            // aaemu-custom (issue #14): stats scale as Level * 10 (see Str).
+            var res = (double)(Level * 10);
             res = CalculateWithBonuses(res, UnitAttribute.Fai);
 
             return (int)res;
