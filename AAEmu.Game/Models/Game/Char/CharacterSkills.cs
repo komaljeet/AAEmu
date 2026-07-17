@@ -4,6 +4,8 @@ using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Templates;
 using MySql.Data.MySqlClient;
 
+using NLog;
+
 namespace AAEmu.Game.Models.Game.Char;
 
 public class CharacterSkills(Character owner)
@@ -18,6 +20,18 @@ public class CharacterSkills(Character owner)
     public Dictionary<uint, Skill> Skills { get; } = [];
     public Dictionary<uint, PassiveBuff> PassiveBuffs { get; } = [];
     private Character Owner { get; } = owner;
+
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// Bonus skill points granted via the Skill Point Tome, read from the shared
+    /// <c>character_skill_points</c> table the aaemu-custom sidecar maintains.
+    /// These add on top of the level-based points when the server gates learning
+    /// a new skill or passive. The 1.2 client does not natively display bonus
+    /// points, but learning is server-gated, so a player with bonus points can
+    /// learn beyond their level's allowance once the client sends the request.
+    /// </summary>
+    public int BonusSkillPoints { get; set; }
 
     /// <summary>
     /// Try to learn a new Skill
@@ -38,6 +52,9 @@ public class CharacterSkills(Character owner)
 
         // Deduct the amount of skill points already used
         points -= GetUsedSkillPoints(AbilityType.General);
+
+        // Add tome-granted bonus points (aaemu-custom sidecar)
+        points += BonusSkillPoints;
 
         // Check if we have enough remaining to learn this Skill
         if (template.SkillPoints > points)
@@ -89,6 +106,9 @@ public class CharacterSkills(Character owner)
 
         // Deduct the amount of skill points already used
         points -= GetUsedSkillPoints(AbilityType.General);
+
+        // Add tome-granted bonus points (aaemu-custom sidecar)
+        points += BonusSkillPoints;
 
         // Check if we have enough remaining to learn this Skill
         if (points < 1)
@@ -171,6 +191,25 @@ public class CharacterSkills(Character owner)
     #region database
     public void Load(MySqlConnection connection)
     {
+        // aaemu-custom: bonus skill points granted via tomes live in the shared
+        // character_skill_points table (sidecar-owned, "game server consumes").
+        // Best-effort: a missing row, or a shared DB where the sidecar hasn't
+        // created the table yet, leaves the bonus at 0. Read before the skills
+        // reader so the two readers never overlap on this connection.
+        try
+        {
+            using var bonusCmd = connection.CreateCommand();
+            bonusCmd.CommandText = "SELECT points FROM character_skill_points WHERE character_id = @id";
+            bonusCmd.Parameters.AddWithValue("@id", Owner.Id);
+            using var bonusReader = bonusCmd.ExecuteReader();
+            if (bonusReader.Read() && !bonusReader.IsDBNull(0))
+                BonusSkillPoints = bonusReader.GetInt32(0);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"CharacterSkills.Load: bonus points read failed for {Owner.Id}: {ex.Message}");
+        }
+
         using (var command = connection.CreateCommand())
         {
             command.CommandText = "SELECT * FROM skills WHERE `owner` = @owner";
