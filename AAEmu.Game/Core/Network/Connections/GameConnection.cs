@@ -10,10 +10,14 @@ using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Housing;
 
+using NLog;
+
 namespace AAEmu.Game.Core.Network.Connections;
 
 public class GameConnection
 {
+    private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
+
     private readonly ISession _session;
 
     public uint Id => _session.SessionId;
@@ -48,6 +52,12 @@ public class GameConnection
     /// <param name="packet"></param>
     public void SendPacket(GamePacket packet)
     {
+        if (packet.TypeId == 0xFFF)
+        {
+            Logger.Error("Dropping invalid game packet with opcode 0xFFF.");
+            return;
+        }
+
         packet.Connection = this;
         SendPacket(packet.Encode());
     }
@@ -90,6 +100,7 @@ public class GameConnection
 
             ActiveChar.Events?.OnDisconnect(this, new OnDisconnectArgs { Player = ActiveChar });
             ActiveChar.RemoveAndDespawnActiveOwnedMatesSlaves();
+            DoodadManager.Instance.CloseCoffersOpenedBy(ActiveChar);
         }
 
         foreach (var subscriber in Subscribers)
